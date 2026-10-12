@@ -219,18 +219,15 @@ button.small{padding:8px 11px;font-size:9.5px;min-height:34px}
 .btn-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 
 /* ═══════════════════════════════════════════════════════════════════════
-   ACCOUNTS SCROLL
+   ACCOUNTS LIST (VERTICAL)
    ═══════════════════════════════════════════════════════════════════════ */
 .accounts-scroll{
-    display:flex;gap:12px;overflow-x:auto;
-    padding:2px 2px 12px;scroll-snap-type:x mandatory;
+    display:flex;flex-direction:column;gap:12px;
+    padding:2px 2px 12px;
 }
-.accounts-scroll::-webkit-scrollbar{height:6px}
-.accounts-scroll::-webkit-scrollbar-track{background:var(--line);border-radius:0}
-.accounts-scroll::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:0}
 
 .account-card{
-    min-width:290px;max-width:320px;flex:0 0 auto;scroll-snap-align:start;
+    width:100%;max-width:none;
     background:rgba(0,0,0,.28);border:1px solid var(--line);
     border-left:3px solid var(--acid);border-radius:0;padding:15px;
     display:flex;flex-direction:column;justify-content:space-between;
@@ -599,7 +596,6 @@ tr:last-child td{border-bottom:none}
     .carousel-nav.prev{left:8px}
     .carousel-nav.next{right:8px}
     .carousel-counter{display:none}
-    .account-card{min-width:250px}
     th,td{padding:9px 10px;font-size:11px}
     .metric-grid{grid-template-columns:1fr 1fr}
     .metric-cell:nth-child(2n){border-right:none}
@@ -641,15 +637,15 @@ tr:last-child td{border-bottom:none}
             </div>
         </section>
 
-        <!-- 1 · KPI Variación diaria -->
+        <!-- 1 · KPI Variación del periodo -->
         <section class="slide">
             <div class="slide-inner">
                 <div class="card kpi-card" id="kpiActualCard">
-                    <div class="stat-label">Variación real diaria</div>
+                    <div class="stat-label">Variación real del periodo</div>
                     <div id="actualDaily" class="stat">—</div>
-                    <div class="muted">Comparado con el registro previo</div>
+                    <div id="actualSub" class="muted">Primer → último registro</div>
                     <div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--line);">
-                        <div class="stat-label">Registros con comparación</div>
+                        <div class="stat-label">Cuentas comparadas</div>
                         <div id="kpiComparables" style="font-family:var(--font-mono);font-size:22px;font-weight:700;letter-spacing:-.03em;margin-top:6px;font-variant-numeric:tabular-nums;">0</div>
                     </div>
                 </div>
@@ -660,9 +656,10 @@ tr:last-child td{border-bottom:none}
         <section class="slide">
             <div class="slide-inner">
                 <div class="card kpi-card" id="kpiDeltaCard">
-                    <div class="stat-label">Vs. Objetivo diario</div>
+                    <div class="stat-label">Vs. Objetivo del periodo</div>
                     <div id="deltaDaily" class="stat">—</div>
-                    <div id="statusDaily" class="muted">Añade registros para evaluar</div>
+                    <div id="deltaSub" class="muted">—</div>
+                    <div id="statusDaily" class="muted" style="margin-top:10px">Añade registros para evaluar</div>
                 </div>
             </div>
         </section>
@@ -674,7 +671,7 @@ tr:last-child td{border-bottom:none}
                 <div class="card chart-evo-card">
                     <div class="card-title">Evolución del valor total</div>
                     <div class="card-sub" id="chartEvoSub">Serie agregada de todas las cuentas</div>
-                    <div class="chart-wrap h-main">
+                    <div class="chart-wrap h-main" id="wrapEvolucion">
                         <canvas id="chartEvolucion"></canvas>
                     </div>
                     <div class="chart-legend">
@@ -713,7 +710,7 @@ tr:last-child td{border-bottom:none}
                 <div class="card chart-cuentas-card">
                     <div class="card-title">Rentabilidad por cuenta</div>
                     <div class="card-sub">Variación % entre primer y último registro</div>
-                    <div class="chart-wrap h-sub">
+                    <div class="chart-wrap h-sub" id="wrapPorCuenta">
                         <canvas id="chartPorCuenta"></canvas>
                     </div>
                 </div>
@@ -802,7 +799,7 @@ tr:last-child td{border-bottom:none}
                     <div class="toolbar" style="margin-bottom:14px">
                         <div>
                             <div class="card-title" style="margin:0">Mis Cuentas y Activos</div>
-                            <div class="card-sub" style="margin:2px 0 0">Scroll horizontal para verlas todas</div>
+                            <div class="card-sub" style="margin:2px 0 0">Listado vertical de tus cuentas y activos</div>
                         </div>
                     </div>
                     <div id="accountsContainer" class="accounts-scroll"></div>
@@ -914,6 +911,50 @@ tr:last-child td{border-bottom:none}
         return !p || p.value === 0 ? null : (e.value / p.value - 1) * 100;
     }
 
+    // Carga las cuentas CON sus entradas ya resueltas
+    function loadAccountsWithEntries() {
+        const db = loadData();
+        return db.accounts.map(a => ({
+            ...a,
+            entries: db.entries.filter(e => e.account_id === a.id)
+        })).sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    // Compara PRIMER registro vs ÚLTIMO registro y calcula el objetivo
+    // proporcional a los días transcurridos entre ambos.
+    function periodStats(a) {
+        const entries = [...(a.entries || [])].sort((x, y) => x.entry_date.localeCompare(y.entry_date));
+        if (entries.length < 2) return null;
+        const f = entries[0], l = entries[entries.length - 1];
+        if (!f.value) return null;
+
+        const days = Math.max(0, Math.round(
+            (new Date(l.entry_date + 'T00:00:00').getTime() -
+             new Date(f.entry_date + 'T00:00:00').getTime()) / 86400000
+        ));
+
+        const actual = (l.value / f.value - 1) * 100;
+        const target = (Math.pow(1 + Number(a.target_annual) / 100, days / 365) - 1) * 100;
+        return { first: f, last: l, days, actual, target, delta: actual - target };
+    }
+
+    // Recrea el canvas si fue destruido por el estado vacío
+    function setChartEmpty(wrapId, msg) {
+        const wrap = document.getElementById(wrapId);
+        if (!wrap) return;
+        wrap.innerHTML = `<div class="empty" style="padding:24px;"><span class="icon">◇</span>${msg}</div>`;
+    }
+    function ensureCanvas(wrapId, canvasId) {
+        const wrap = document.getElementById(wrapId);
+        if (!wrap) return null;
+        let c = document.getElementById(canvasId);
+        if (!c) {
+            wrap.innerHTML = `<canvas id="${canvasId}"></canvas>`;
+            c = document.getElementById(canvasId);
+        }
+        return c;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // CHARTS
     // ═══════════════════════════════════════════════════════════════════
@@ -969,21 +1010,17 @@ tr:last-child td{border-bottom:none}
     }
 
     function renderEvoChart() {
-        const canvas = document.getElementById('chartEvolucion');
-        if (!canvas || typeof Chart === 'undefined') return;
+        if (typeof Chart === 'undefined') return;
         const series = buildPortfolioSeries();
 
         if (!series.labels.length) {
             if (chartEvo) { chartEvo.destroy(); chartEvo = null; }
-            const parent = canvas.parentElement;
-            if (parent) parent.innerHTML = '<div class="empty" style="padding:24px;"><span class="icon">◇</span>Sin datos suficientes</div>';
+            setChartEmpty('wrapEvolucion', 'Sin datos suficientes');
             return;
         }
 
-        if (!document.getElementById('chartEvolucion')) {
-            canvas.parentElement.innerHTML = '<canvas id="chartEvolucion"></canvas>';
-        }
-        const cvs = document.getElementById('chartEvolucion');
+        const cvs = ensureCanvas('wrapEvolucion', 'chartEvolucion');
+        if (!cvs) return;
         const ctx = cvs.getContext('2d');
 
         const grad = ctx.createLinearGradient(0, 0, 0, 300);
@@ -1083,29 +1120,24 @@ tr:last-child td{border-bottom:none}
     }
 
     function renderCuentasChart() {
-        const canvas = document.getElementById('chartPorCuenta');
-        if (!canvas || typeof Chart === 'undefined') return;
+        if (typeof Chart === 'undefined') return;
 
-        const db = loadData();
-        const datos = db.accounts.map(a => {
-            const entries = [...a.entries].sort((x, y) => x.entry_date.localeCompare(y.entry_date));
-            if (entries.length < 2) return { name: a.name, change: null };
-            const f = entries[0], l = entries[entries.length - 1];
-            if (f.value === 0) return { name: a.name, change: null };
-            return { name: a.name, change: (l.value / f.value - 1) * 100 };
-        }).filter(d => d.change !== null);
+        const accounts = loadAccountsWithEntries();
+        const datos = accounts
+            .map(a => {
+                const s = periodStats(a);
+                return s ? { name: a.name, change: s.actual } : null;
+            })
+            .filter(Boolean);
 
         if (!datos.length) {
             if (chartCuentas) { chartCuentas.destroy(); chartCuentas = null; }
-            const parent = canvas.parentElement;
-            if (parent) parent.innerHTML = '<div class="empty" style="padding:24px;"><span class="icon">◇</span>Cada cuenta necesita ≥2 registros</div>';
+            setChartEmpty('wrapPorCuenta', 'Cada cuenta necesita ≥2 registros');
             return;
         }
 
-        if (!document.getElementById('chartPorCuenta')) {
-            canvas.parentElement.innerHTML = '<canvas id="chartPorCuenta"></canvas>';
-        }
-        const cvs = document.getElementById('chartPorCuenta');
+        const cvs = ensureCanvas('wrapPorCuenta', 'chartPorCuenta');
+        if (!cvs) return;
         const ctx = cvs.getContext('2d');
 
         const colors = datos.map(d => d.change >= 0 ? '#6ee7b7' : '#fb7185');
@@ -1172,12 +1204,12 @@ tr:last-child td{border-bottom:none}
     }
 
     function renderMetrics() {
-        const db = loadData();
+        const accounts = loadAccountsWithEntries();
 
         let firstSum = 0, lastSum = 0, countPairs = 0;
-        db.accounts.forEach(a => {
-            const f = first(a), l = latest(a);
-            if (f && l) { firstSum += f.value; lastSum += l.value; countPairs++; }
+        accounts.forEach(a => {
+            const s = periodStats(a);
+            if (s) { firstSum += s.first.value; lastSum += s.last.value; countPairs++; }
         });
         const rentTotal = firstSum > 0 ? (lastSum / firstSum - 1) * 100 : null;
 
@@ -1192,12 +1224,11 @@ tr:last-child td{border-bottom:none}
         }
         if (mRentSub) mRentSub.textContent = countPairs ? `${countPairs} cuentas comparadas` : 'sin datos';
 
-        const ranking = db.accounts.map(a => {
-            const f = first(a), l = latest(a);
-            if (!f || !l || f.value === 0) return { name: a.name, kind: a.kind, change: null, value: l?.value ?? 0 };
-            return { name: a.name, kind: a.kind, change: (l.value / f.value - 1) * 100, value: l.value };
-        }).filter(x => x.change !== null)
-          .sort((a, b) => b.change - a.change);
+        const ranking = accounts.map(a => {
+            const s = periodStats(a);
+            if (!s) return null;
+            return { name: a.name, kind: a.kind, change: s.actual, value: s.last.value };
+        }).filter(Boolean).sort((a, b) => b.change - a.change);
 
         const mMejor = document.getElementById('mMejor');
         const mMejorSub = document.getElementById('mMejorSub');
@@ -1220,7 +1251,7 @@ tr:last-child td{border-bottom:none}
 
         const mDias = document.getElementById('mDias');
         if (mDias) {
-            const dates = new Set(db.entries.map(e => e.entry_date));
+            const dates = new Set(loadData().entries.map(e => e.entry_date));
             mDias.textContent = dates.size;
         }
 
@@ -1253,11 +1284,7 @@ tr:last-child td{border-bottom:none}
     // REFRESH
     // ═══════════════════════════════════════════════════════════════════
     function refresh() {
-        const db = loadData();
-        const accounts = db.accounts.map(a => ({
-            ...a,
-            entries: db.entries.filter(e => e.account_id === a.id)
-        })).sort((a, b) => a.name.localeCompare(b.name));
+        const accounts = loadAccountsWithEntries();
 
         let sel = document.getElementById('accountSelect'), old = sel.value;
         sel.innerHTML = accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('');
@@ -1266,16 +1293,18 @@ tr:last-child td{border-bottom:none}
         const kpiAccounts = document.getElementById('kpiAccountsCount');
         if (kpiAccounts) kpiAccounts.textContent = accounts.length;
 
-        let container = document.getElementById('accountsContainer');
+        const container = document.getElementById('accountsContainer');
         container.innerHTML = '';
         document.getElementById('emptyAccounts').classList.toggle('hidden', !!accounts.length);
 
         for (let a of accounts) {
-            let l = latest(a), d = l ? daily(a, l) : null, t = targetDaily(a);
-            const state = d === null ? '' : d >= t ? 'up' : 'down';
-            const stateTxt = d === null ? 'Sin datos' : d >= t ? 'Por encima' : 'Por debajo';
-            const cardCls = d === null ? 'neutral' : d >= t ? '' : 'neg';
-            const dCls = d === null ? '' : d >= 0 ? 'pos' : 'neg';
+            const l = latest(a);
+            const s = periodStats(a);
+            const pillCls = !s ? '' : s.delta >= 0 ? 'up' : 'down';
+            const pillTxt = !s ? 'Sin datos' : s.delta >= 0 ? 'Por encima' : 'Por debajo';
+            const cardCls = !s ? 'neutral' : s.delta >= 0 ? '' : 'neg';
+            const dCls = !s ? '' : s.actual >= 0 ? 'pos' : 'neg';
+            const vCls = !s ? '' : s.delta >= 0 ? 'pos' : 'neg';
 
             container.insertAdjacentHTML('beforeend', `
                 <div class="account-card ${cardCls}">
@@ -1285,7 +1314,7 @@ tr:last-child td{border-bottom:none}
                                 <h3>${esc(a.name)}</h3>
                                 <div class="kind">${esc(a.kind)}</div>
                             </div>
-                            <span class="pill ${state}">${stateTxt}</span>
+                            <span class="pill ${pillCls}">${pillTxt}</span>
                         </div>
                         <div class="account-body">
                             <div class="account-row-info">
@@ -1293,16 +1322,20 @@ tr:last-child td{border-bottom:none}
                                 <span class="v">${l ? euro(l.value) : '—'}</span>
                             </div>
                             <div class="account-row-info">
-                                <span class="k">Fecha valor</span>
-                                <span class="v">${l ? l.entry_date : '—'}</span>
+                                <span class="k">Periodo</span>
+                                <span class="v">${s ? s.days + ' días' : '—'}</span>
                             </div>
                             <div class="account-row-info">
-                                <span class="k">Var. diaria</span>
-                                <span class="v ${dCls}">${d === null ? '—' : pct(d)}</span>
+                                <span class="k">Var. periodo</span>
+                                <span class="v ${dCls}">${s ? pct(s.actual) : '—'}</span>
                             </div>
                             <div class="account-row-info">
                                 <span class="k">Objetivo</span>
-                                <span class="v">${Number(a.target_annual).toLocaleString('es-ES')}% · ${pct(t)}</span>
+                                <span class="v">${s ? pct(s.target) : '—'}</span>
+                            </div>
+                            <div class="account-row-info">
+                                <span class="k">Vs objetivo</span>
+                                <span class="v ${vCls}">${s ? (s.delta >= 0 ? '+' : '') + s.delta.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' pp' : '—'}</span>
                             </div>
                         </div>
                     </div>
@@ -1314,39 +1347,54 @@ tr:last-child td{border-bottom:none}
             `);
         }
 
-        let day = document.getElementById('entryDate').value;
-        let todays = accounts.map(a => ({ a, e: a.entries.find(e => e.entry_date === day) })).filter(x => x.e);
+        // ── KPI 1 · valor total en la fecha seleccionada ──
+        const day = document.getElementById('entryDate').value;
+        const todays = accounts.map(a => ({ a, e: a.entries.find(e => e.entry_date === day) })).filter(x => x.e);
 
         const totalEl = document.getElementById('totalToday');
         totalEl.textContent = todays.length ? euro(todays.reduce((s, x) => s + x.e.value, 0)) : '—';
 
-        let comp = todays.map(x => ({ ...x, p: prevEntry(x.a, x.e) })).filter(x => x.p);
+        // ── KPI 2 y 3 · PRIMER registro vs ÚLTIMO registro ──
+        const stats = accounts.map(a => ({ a, s: periodStats(a) })).filter(x => x.s);
 
         const kpiComparables = document.getElementById('kpiComparables');
-        if (kpiComparables) kpiComparables.textContent = comp.length;
+        if (kpiComparables) kpiComparables.textContent = stats.length;
 
-        const actualEl = document.getElementById('actualDaily');
-        const deltaEl  = document.getElementById('deltaDaily');
-        const statusEl = document.getElementById('statusDaily');
+        const actualEl   = document.getElementById('actualDaily');
+        const deltaEl    = document.getElementById('deltaDaily');
+        const statusEl   = document.getElementById('statusDaily');
+        const actualSub  = document.getElementById('actualSub');
+        const deltaSub   = document.getElementById('deltaSub');
         const actualCard = document.getElementById('kpiActualCard');
         const deltaCard  = document.getElementById('kpiDeltaCard');
 
-        if (comp.length) {
-            let oldSum = comp.reduce((s, x) => s + x.p.value, 0);
-            let newSum = comp.reduce((s, x) => s + x.e.value, 0);
-            let actual = (newSum / oldSum - 1) * 100;
-            let expected = comp.reduce((s, x) => s + x.p.value * targetDaily(x.a) / 100, 0) / oldSum;
-            let delta = actual - expected;
+        if (stats.length) {
+            const firstSum = stats.reduce((s, x) => s + x.s.first.value, 0);
+            const lastSum  = stats.reduce((s, x) => s + x.s.last.value, 0);
+
+            const actual = firstSum > 0 ? (lastSum / firstSum - 1) * 100 : 0;
+
+            const expected = firstSum > 0
+                ? stats.reduce((s, x) => s + x.s.first.value * (x.s.target / 100), 0) / firstSum * 100
+                : 0;
+
+            const delta = actual - expected;
+
+            const dMin = Math.min(...stats.map(x => x.s.days));
+            const dMax = Math.max(...stats.map(x => x.s.days));
+            const range = dMin === dMax ? `${dMin} días` : `${dMin}–${dMax} días`;
 
             actualEl.textContent = pct(actual);
             actualEl.className = 'stat ' + (actual >= 0 ? 'positive' : 'negative');
-            actualCard.classList.remove('neg', 'warn');
-            if (actual < 0) actualCard.classList.add('neg');
+            actualCard.classList.toggle('neg', actual < 0);
 
-            deltaEl.textContent = (delta >= 0 ? '+' : '') + delta.toLocaleString('es-ES', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' pp';
+            deltaEl.textContent = (delta >= 0 ? '+' : '') +
+                delta.toLocaleString('es-ES', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' pp';
             deltaEl.className = 'stat ' + (delta >= 0 ? 'positive' : 'negative');
-            deltaCard.classList.remove('neg', 'warn');
-            deltaCard.classList.add(delta >= 0 ? '' : 'neg');
+            deltaCard.classList.toggle('neg', delta < 0);
+
+            if (actualSub) actualSub.textContent = `Primer → último registro · ${range}`;
+            if (deltaSub)  deltaSub.textContent  = `Objetivo del periodo: ${pct(expected)}`;
 
             statusEl.innerHTML = delta >= 0
                 ? '<span class="pill up">Por encima del objetivo</span>'
@@ -1354,16 +1402,22 @@ tr:last-child td{border-bottom:none}
         } else {
             actualEl.textContent = '—';
             actualEl.className = 'stat';
-            actualCard.classList.remove('neg', 'warn');
+            actualCard.classList.remove('neg');
+
             deltaEl.textContent = '—';
             deltaEl.className = 'stat';
-            deltaCard.classList.remove('neg', 'warn');
-            statusEl.textContent = 'Se necesitan dos fechas por cuenta para comparar.';
+            deltaCard.classList.remove('neg');
+
+            if (actualSub) actualSub.textContent = 'Cada cuenta necesita ≥2 registros';
+            if (deltaSub)  deltaSub.textContent  = '—';
+
+            statusEl.textContent = 'Cada cuenta necesita al menos dos registros para comparar.';
         }
 
-        let hist = [];
+        // ── Histórico ──
+        const hist = [];
         accounts.forEach(a => a.entries.forEach(e => {
-            let p = prevEntry(a, e);
+            const p = prevEntry(a, e);
             hist.push({
                 a, e, p,
                 d: p && p.value ? (e.value / p.value - 1) * 100 : null,
@@ -1372,7 +1426,7 @@ tr:last-child td{border-bottom:none}
         }));
         hist.sort((x, y) => y.e.entry_date.localeCompare(x.e.entry_date) || x.a.name.localeCompare(y.a.name));
 
-        let hb = document.getElementById('historyBody');
+        const hb = document.getElementById('historyBody');
         hb.innerHTML = '';
         document.getElementById('emptyHistory').classList.toggle('hidden', !!hist.length);
 
