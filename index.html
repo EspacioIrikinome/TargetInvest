@@ -1619,5 +1619,34 @@ tr:last-child td{border-bottom:none}
 
     refresh();
 </script>
+<script>
+(function () {
+  // ─── IMPORTANTE ───
+  // Cada vez que subas cambios, cambia este número Y el de version.json.
+  // Deben coincidir SIEMPRE.
+  const APP_VERSION = '2026-10-12-01';
+
+  // Si no estamos en red, no hacemos nada
+  if (!navigator.onLine) return;
+
+  // Pedimos version.json con un parámetro distinto cada vez →
+  // garantiza que NO se sirva desde caché, siempre red.
+  fetch('version.json?t=' + Date.now(), { cache: 'no-store' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (data) {
+      if (!data || !data.version) return;
+
+      // ¿El servidor tiene la misma versión que estamos ejecutando?
+      if (data.version === APP_VERSION) return;
+
+      // El servidor tiene algo más nuevo. Añadimos ?v= a la URL
+      // y recargamos: como la URL cambia, iOS pide el HTML por red.
+      var url = new URL(location.href);
+      url.searchParams.set('v', data.version);
+      location.replace(url.toString());
+    })
+    .catch(function () { /* sin red o error, seguimos con lo cacheado */ });
+})();
+</script>
 </body>
 </html>
